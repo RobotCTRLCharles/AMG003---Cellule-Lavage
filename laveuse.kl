@@ -1,0 +1,813 @@
+Program laveuse
+--
+-- Les oeufs ovale
+-- Programme de manutention des palettes et les separateurs
+-- pour alimenter la laveuse.
+--
+-- Date : Septembre 2011
+-- Rev.:  7 octobre 2011
+--
+--------------------------------------------------
+-- DEFINITION DES VARIABLES
+--------------------------------------------------
+--
+VAR
+
+POS_HOME        : POSITION
+POS_MAINT       : POSITION
+PALWAIT_DROP    : POSITION
+SEPWAIT_DROP    : POSITION
+POS_DROP_PAL    : POSITION
+POS_DROP_SEP    : POSITION
+UP_PAL_POS      : POSITION
+END_PAL_POS     : POSITION
+OUT_PAL_POS     : POSITION
+UP_SEP_POS      : POSITION
+END_SEP_POS     : POSITION
+POS_TEMP        : POSITION
+DEG_LAV_PAL     : POSITION
+DEG_LAV_SEP     : POSITION
+TEMP_GO_HOME    : POSITION
+TEMP_PRISE      : POSITION
+MAINT_PATH      : PATH
+GO_DROP_PAL     : PATH
+GO_DROP_SEP     : PATH
+GO_HOME_PAL     : PATH
+GO_HOME_SEP     : PATH
+
+status          : INTEGER
+current_node    : INTEGER
+percnt_speed    : INTEGER
+node_ttype      : INTEGER
+node_motype     : INTEGER
+node_decltol    : INTEGER
+vitesse         : INTEGER 
+search_fast     : INTEGER
+dist_pickpal    : INTEGER
+dist_picksep    : INTEGER
+poz_z_home      : INTEGER
+r_prise_sep     : BOOLEAN
+x,y,z           : REAL
+w,p,r           : REAL
+direction       : VECTOR
+configstring    : String[12]
+str_override    : String[5]
+kcl_com         : String[30] 
+assoc_path      : String[12]  
+loc_message     : STRING[60]  
+lline           : STRING[80]                       
+
+--------------------------------------------------
+-- DEFINITION DES CONSTANTES
+--------------------------------------------------
+
+CONST
+
+-- INPUT
+
+  JOB_BIT_1      = 1   -- Robot job bit #1 GIN1
+  JOB_BIT_2      = 2   -- Robot job bit #2 GIN1
+  JOB_BIT_3      = 3   -- Robot job bit #3 GIN1
+  RESET_FAST     = 4   -- Rearmement de la recherche rapide
+  ABORT_PRG      = 5   -- Abort programme par le PLC
+  EXECUTE_PROG   = 6   -- Demande executer la prise de palette ou
+                       -- la prise du separateur
+  LAVEUSE_OK     = 7   -- Laveuse libre pour d�poser la palette ou
+                     -- le separateur
+  RUN_MAINT      = 8   -- Demande la position maintenance                     
+              
+-- OUTPUT
+
+  ALARME_BIT_1   = 1   -- Alarme Robot bit # 1 GOUT1
+  ALARME_BIT_2   = 2   -- Alarme Robot bit # 2 GOUT1
+  ALARME_BIT_3   = 3   -- Alarme Robot bit # 3 GOUT1
+  LIBRE_OUT_4    = 4   -- Alarme Robot bit # 4 GOUT1
+  HOME_POS       = 5   -- Robot en position HOME
+  MAINT_POS      = 6   -- Robot en position maintenance
+  IN_ZONE_PICK   = 7   -- Robot dans la zone de prise
+  IN_ZONE_DROP   = 8   -- Robot dans la zone de drop
+
+  CONF_RESET     = 10  -- Confirmation du rearmement de la
+                       -- vitesse rapide
+
+
+-- KAREL SDIN/SDOUT
+
+  pb_user1     = 175  -- Bouton USER # 1 Position maintenance
+  pb_user2     = 176  -- Bouton USER # 2 Position chargement
+  tp_enbl      = 532  -- Cl� Teach Pendant position ON
+  led_user1    = 159  -- Led USER # 1 Deplacement maintenance OK
+  led_user2    = 160  -- Led USER # 2 Depalcement chargement OK
+
+-- EE CONNECTEUR INPUT
+
+  GRIPPER_OPEN = 33   -- Pince ouverte
+  PRESSION_OK  = 34   -- Pression OK (serrage de la palette)
+  VACUUM_OK    = 35   -- Vacuum OK
+  PALPEUR_BAS  = 37   -- Palpeur en position basse
+  PALPEUR_HAUT = 38   -- Palpeur en position haute
+  GRIPPERCLOSE = 39   -- Pince fermee  
+  
+-- EE CONNECTEUR OUTPUT
+
+  OPEN_GRIPPER = 33   -- Ouvrir la pince
+  VACUUM_ON    = 34   -- Active le Vacuum
+  BLOW_OFF     = 35   -- Active le Blow Off
+  VACUUM_OFF   = 36   -- Desactive le vacuum
+  DOWN_PALPEUR = 37   -- Descendre le Palpeur
+
+-- GROUPE INPUT
+
+  JOB          = 1    -- Selection de la job
+  
+-- GROUPE OUTPUT
+
+  ALARME       = 1    -- Alarme
+
+---------------------------------------------------
+--                  ROUTINES                     --
+---------------------------------------------------
+
+---------------------------------------------------
+ROUTINE r_abort -- Routine abort programme
+---------------------------------------------------
+
+BEGIN
+  
+  ABORT
+  
+END r_abort
+---------------------------------------------------
+
+---------------------------------------------------
+ROUTINE clear_screen -- Routine efface ecran
+---------------------------------------------------
+
+VAR CHAR: STRING[3]
+
+BEGIN
+  CHR(128,CHAR,1)
+  CHR(137,CHAR,2)
+  CHR(140,CHAR,3)
+  WRITE(CHAR)
+  
+END clear_screen
+---------------------------------------------------
+
+---------------------------------------------------
+ROUTINE set_pos (X,Y,Z : INTEGER)
+---------------------------------------------------
+
+VAR
+  CURS_LOC : STRING[6]
+
+BEGIN
+
+  CHR(131, CURS_LOC, 1)
+  Chr(X, CURS_LOC, 2)
+  Chr(Y, CURS_LOC, 3)
+  CHR(Z,CURS_LOC,4)
+  Write(CURS_LOC)
+
+END set_pos
+---------------------------------------------------
+
+---------------------------------------------------
+ROUTINE maintenance -- Deplacement vers la position maintenance
+---------------------------------------------------
+
+BEGIN
+
+    MOVE TO POS_HOME
+    DOUT[HOME_POS] = OFF
+    SET_POS(15,4,136)
+    WRITE('> DEPLACEMENT VERS LA POSITION MAINTENANCE     ')
+    MOVE ALONG MAINT_PATH
+    MOVE TO POS_MAINT
+    DOUT[MAINT_POS] = ON
+    affichage
+    SET_POS(15,4,136)
+    WRITE('> LE ROBOT EST A LA POSITION MAINTENANCE       ')
+    PAUSE
+    DOUT[MAINT_POS] = OFF
+    MOVE ALONG MAINT_PATH[PATHLEN(MAINT_PATH)..1]
+    MOVE TO POS_HOME
+    DOUT[HOME_POS] = ON    
+    affichage 
+  
+END maintenance
+---------------------------------------------------
+
+--------------------------------------------------
+ROUTINE affichage -- Affiche la page principale
+---------------------------------------------------
+
+BEGIN
+
+  clear_screen
+  set_pos(1,13,148)
+  WRITE('LES OEUFS OVALE')
+
+END affichage
+--------------------------------------------------
+
+--------------------------------------------------
+ROUTINE int_to_chr(int: Integer; text: String)
+--------------------------------------------------
+
+VAR
+  hundreds, tens, ones: Integer
+BEGIN
+
+  hundreds = (int Div 100)
+  tens = ((int Mod 100) Div 10)
+  ones = ((int Mod 100) Mod 10)
+
+  If hundreds > 0 Then
+     text = '   '
+     Chr(48+ones,text,3)
+     Chr(48+tens,text,2)
+     Chr(48+hundreds,text,1)
+  Else
+    If tens > 0 Then
+      text = '  '
+      Chr(48+ones,text,2)
+      Chr(48+tens,text,1)
+    Else
+      text=' '
+      Chr(48+ones,text,1)
+    Endif
+  Endif
+
+END int_to_chr
+---------------------------------------------------
+
+---------------------------------------------------
+ROUTINE open_tool -- Ouverture de la pince
+---------------------------------------------------
+
+BEGIN
+    
+    DOUT[OPEN_GRIPPER] = ON
+    GOUT[ALARME] = 2
+    WAIT FOR DIN[GRIPPER_OPEN] = ON
+    GOUT[ALARME] = 0
+
+END open_tool
+--------------------------------------------------
+
+---------------------------------------------------
+ROUTINE close_tool -- Fermeture de la pince
+---------------------------------------------------
+
+BEGIN
+
+  DOUT[OPEN_GRIPPER] = OFF
+  DELAY 200  -- Filtre avant la detection de la pression
+  GOUT[ALARME] = 3
+  WAIT FOR DIN[PRESSION_OK] = ON
+  GOUT[ALARME] = 0
+
+END close_tool
+--------------------------------------------------
+
+---------------------------------------------------
+ROUTINE palpeur_up -- Monter le palpeur
+---------------------------------------------------
+
+BEGIN
+
+  DOUT[DOWN_PALPEUR] = OFF
+  GOUT[ALARME] = 6
+  WAIT FOR DIN[PALPEUR_HAUT] = ON
+  GOUT[ALARME] = 0
+  
+END palpeur_up
+--------------------------------------------------
+
+---------------------------------------------------
+ROUTINE palpeur_down -- Descendre le palpeur
+---------------------------------------------------
+
+BEGIN
+
+  DOUT[DOWN_PALPEUR] = ON
+  GOUT[ALARME] = 5
+  WAIT FOR DIN[PALPEUR_BAS] = ON
+  GOUT[ALARME] = 0
+
+END palpeur_down
+--------------------------------------------------
+
+---------------------------------------------------
+ROUTINE r_vacuum_on -- Activer le vacuum
+---------------------------------------------------
+
+BEGIN
+
+  DOUT[VACUUM_OFF] = OFF
+  DOUT[BLOW_OFF] = OFF
+  PULSE DOUT[VACUUM_ON] FOR 500
+  DELAY 200  -- Filtre avant de verifier le vacuum
+  
+END r_vacuum_on
+--------------------------------------------------
+
+---------------------------------------------------
+ROUTINE r_vacuum_off -- Desactiver le vacuum
+---------------------------------------------------
+
+BEGIN
+
+  DOUT[VACUUM_ON] = OFF
+  PULSE DOUT[VACUUM_OFF] FOR 500  
+  PULSE DOUT[BLOW_OFF] FOR 250
+  
+END r_vacuum_off
+--------------------------------------------------
+
+---------------------------------------------------
+--              DEBUT DU PROGRAMME               --
+---------------------------------------------------
+
+BEGIN
+
+clear_screen
+DISPLAYPG('CRT_KAREL', STATUS)
+
+---------------------------------------------------
+-- CONDITION HANDLERS
+---------------------------------------------------
+
+CONDITION[1]:
+  
+  WHEN SDIN[tp_enbl]+ DO
+    r_abort
+
+ENDCONDITION    
+
+CONDITION[2]:
+  
+  WHEN DIN[ABORT_PRG]+ DO
+    r_abort
+
+ENDCONDITION    
+
+
+---------------------------------------------------   
+---------------------------------------------------
+
+SDOUT[led_user1] = OFF
+SDOUT[led_user2] = OFF
+
+$UFRAME = $NILP
+$SPEED = 1500
+$TERMTYPE = VARDECEL
+$DECELTOL = 20
+$MOTYPE = LINEAR
+search_fast = 0
+DOUT[HOME_POS] = OFF
+DOUT[MAINT_POS] = OFF
+GOUT[ALARME]= 0
+
+palpeur_up
+IF UNINIT(vitesse) THEN vitesse = 20; ENDIF
+
+vitesse = 20
+kcl_com = 'set var $genoverride ='
+int_to_chr(vitesse, str_override)
+concat(str_override,kcl_com)
+KCL(kcl_com)
+             
+ENABLE CONDITION[1]
+ENABLE CONDITION[2]
+
+-- VERIFIER SI LE ROBOT EST A LA POSITION HOME
+
+IF CURPOS >=< POS_HOME THEN
+
+  affichage
+  SET_POS(15,4,136)
+  WRITE('> LE ROBOT EST A LA POSITION HOME              ')
+  DOUT[HOME_POS] = ON
+  DOUT[IN_ZONE_PICK] = ON
+  DOUT[IN_ZONE_DROP] = ON
+
+ELSE
+
+  DOUT[HOME_POS] = OFF
+  UNPOS(CURPOS,x,y,z,w,p,r,configstring)
+  TEMP_GO_HOME = POS(x,y,670,w,p,r,configstring)
+  WITH $SPEED = 500, $MOTYPE = LINEAR MOVE TO TEMP_GO_HOME
+  
+  affichage
+  SET_POS(15,4,136)
+  WRITE('> DEPLACEMENT VERS LA POSITION HOME           ')
+  WITH $SPEED = 500, $MOTYPE = JOINT MOVE TO POS_HOME
+  DOUT[HOME_POS] = ON
+  DOUT[IN_ZONE_PICK] = ON
+  DOUT[IN_ZONE_DROP] = ON            
+          
+ENDIF
+
+vitesse = 100
+kcl_com = 'set var $genoverride ='
+int_to_chr(vitesse, str_override)
+concat(str_override,kcl_com)
+KCL(kcl_com) 
+
+-- VERIFIER S'IL Y A UNE PALETTE OU SEPARATEUR PRESENT AU DEPART
+
+IF GIN[JOB] = 1 THEN
+
+  IF DIN[GRIPPER_OPEN] = OFF THEN
+
+    DOUT[DOWN_PALPEUR] = ON
+    DELAY 3000
+  
+    IF DIN[PALPEUR_BAS]=OFF THEN
+  
+      palpeur_up
+      $TERMTYPE = NOSETTLE
+    
+      MOVE TO DEG_LAV_PAL
+ 
+      MOVE TO PALWAIT_DROP
+     
+      WAIT FOR DIN[LAVEUSE_OK]
+      
+      DOUT[IN_ZONE_DROP] = OFF
+          
+      MOVE TO POS_DROP_PAL
+    
+      DELAY 100
+    
+      $TERMTYPE = VARDECEL
+      $DECELTOL = 20
+ 
+      open_tool
+    
+      MOVE TO PALWAIT_DROP
+      
+      DOUT[IN_ZONE_DROP] = ON
+          
+      MOVE ALONG GO_HOME_PAL NOWAIT
+    
+      MOVE TO POS_HOME
+      DOUT[HOME_POS] = ON  
+  
+    ENDIF
+  
+    palpeur_up
+    open_tool
+    r_vacuum_off  
+  
+  ENDIF
+
+ENDIF
+
+IF GIN[JOB] = 2 THEN
+
+  DOUT[DOWN_PALPEUR] = ON
+  DELAY 3000
+  
+  IF DIN[PALPEUR_BAS]=OFF THEN
+  
+    DOUT[DOWN_PALPEUR] = OFF
+    
+    $TERMTYPE = NOSETTLE
+ 
+    MOVE TO DEG_LAV_SEP
+ 
+    MOVE TO SEPWAIT_DROP
+     
+    WAIT FOR DIN[LAVEUSE_OK]
+      
+    DOUT[IN_ZONE_DROP] = OFF
+          
+    MOVE TO POS_DROP_SEP
+      
+    r_vacuum_off
+    
+    DELAY 100
+    
+    $TERMTYPE = VARDECEL
+    $DECELTOL = 20
+    
+    MOVE TO SEPWAIT_DROP
+      
+    DOUT[IN_ZONE_DROP] = ON
+          
+    MOVE ALONG GO_HOME_SEP NOWAIT
+    
+    MOVE TO POS_HOME
+    DOUT[HOME_POS] = ON
+  
+  ENDIF
+  
+  palpeur_up
+  open_tool
+  r_vacuum_off  
+
+ENDIF
+    
+affichage
+
+WHILE DIN[EXECUTE_PROG]= ON DO
+
+    IF GIN[JOB] = 1 Then  -- Palettes
+  
+      $SPEED = 1500
+      $TERMTYPE = VARDECEL
+      $DECELTOL = 80
+      $MOTYPE = JOINT     
+
+      DOUT[HOME_POS] = OFF
+      MOVE TO UP_PAL_POS
+      DOUT[IN_ZONE_PICK] = OFF
+    
+      open_tool
+      palpeur_down
+      
+      IF DIN[RESET_FAST] = ON THEN
+      
+        search_fast = 0
+        PULSE DOUT[CONF_RESET] FOR 1000
+      
+      ENDIF  
+ 
+      IF search_fast = 1 THEN
+ 
+        $TERMTYPE = VARDECEL
+        $DECELTOL = 60
+        WITH $SPEED = 1000, $MOTYPE = LINEAR MOVE NEAR POS_TEMP BY 50
+ 
+      ENDIF
+      
+      WITH $SPEED = 200, $MOTYPE = LINEAR MOVE TO END_PAL_POS,
+        WHEN DIN[PALPEUR_BAS]= OFF DO
+          CANCEL
+      ENDMOVE
+      
+      IF DIN[PALPEUR_BAS] = ON THEN
+      
+        palpeur_up      
+        WITH $SPEED = 1000, $MOTYPE = LINEAR MOVE TO UP_PAL_POS
+        MOVE TO POS_HOME
+        DOUT[HOME_POS] = ON        
+        ABORT
+        
+      ENDIF
+      
+      palpeur_up      
+             
+      POS_TEMP = CURPOS
+      search_fast = 1
+    
+      dist_pickpal = 35
+    
+      MOVE AWAY dist_pickpal
+      
+      $SPEED = 1500
+      $TERMTYPE = VARDECEL
+      $DECELTOL = 50
+      $MOTYPE = LINEAR    
+    
+      direction = VEC(0,-35,0)
+      MOVE RELATIVE direction
+    
+      close_tool
+
+      $SPEED = 1500
+      $TERMTYPE = VARDECEL
+      $DECELTOL = 90
+      $MOTYPE = LINEAR
+      
+      MOVE TO OUT_PAL_POS      
+
+      DOUT[IN_ZONE_PICK] = ON 
+      
+      IF DIN[GRIPPERCLOSE] = ON THEN
+                
+        $SPEED = 750
+        MOVE TO POS_HOME
+        DOUT[HOME_POS] = ON
+
+        GOUT[ALARME] = 3               
+        ABORT
+        
+      ENDIF 
+      
+      $TERMTYPE = VARDECEL
+      $DECELTOL = 40
+      MOVE ALONG GO_DROP_PAL NOWAIT
+    
+      $TERMTYPE = NOSETTLE
+ 
+      MOVE TO PALWAIT_DROP NOWAIT
+     
+      WAIT FOR DIN[LAVEUSE_OK]
+      
+      DOUT[IN_ZONE_DROP] = OFF
+          
+      MOVE TO POS_DROP_PAL
+    
+      DELAY 100
+    
+      $TERMTYPE = VARDECEL
+      $DECELTOL = 20
+ 
+      open_tool
+ 
+      $SPEED = 1500
+      $TERMTYPE = NOSETTLE
+      $DECELTOL = 80
+      $MOTYPE = LINEAR   
+           
+      MOVE TO PALWAIT_DROP    
+      
+      DOUT[IN_ZONE_DROP] = ON
+
+      IF GIN[JOB] = 1 Then
+      
+        $SPEED = 1500
+        $TERMTYPE = VARDECEL
+        $DECELTOL = 80
+        $MOTYPE = LINEAR    
+          
+        MOVE TO DEG_LAV_PAL NOWAIT   
+                    
+      ELSE    
+          
+        MOVE ALONG GO_HOME_PAL NOWAIT
+    
+        MOVE TO POS_HOME
+        DOUT[HOME_POS] = ON      
+
+      ENDIF
+
+  ENDIF
+  
+  IF GIN[JOB] = 2 Then  -- Seperateurs
+  
+      $SPEED = 1500
+      $TERMTYPE = VARDECEL
+      $DECELTOL = 80
+      $MOTYPE = JOINT     
+      
+      DOUT[HOME_POS] = OFF  
+      MOVE TO UP_SEP_POS
+      DOUT[IN_ZONE_PICK] = OFF
+    
+      open_tool
+      
+      IF DIN[RESET_FAST] = ON THEN
+      
+        search_fast = 0
+        PULSE DOUT[CONF_RESET] FOR 1000
+      
+      ENDIF  
+ 
+      IF search_fast = 1 THEN
+ 
+        $TERMTYPE = VARDECEL
+        $DECELTOL = 80
+        WITH $SPEED = 500, $MOTYPE = LINEAR MOVE NEAR POS_TEMP BY 30
+        
+        IF z < -950 THEN
+          dist_pickpal = -45
+        ELSE
+          dist_pickpal = -70
+        ENDIF    
+ 
+      ELSE
+      
+        palpeur_down 
+        WITH $SPEED = 100, $MOTYPE = LINEAR MOVE TO END_SEP_POS,
+          WHEN DIN[PALPEUR_BAS]= OFF DO
+            CANCEL
+        ENDMOVE   
+           
+        dist_pickpal = -45
+        
+      ENDIF
+ 
+      palpeur_up
+      r_vacuum_on
+      
+      r_prise_sep = False
+      
+      WITH $SPEED = 25, $MOTYPE = LINEAR MOVE AWAY dist_pickpal,
+        WHEN DIN[VACUUM_OK]= ON DO
+          CANCEL
+          r_prise_sep = True
+        ENDMOVE 
+
+      IF r_prise_sep = False THEN
+        r_vacuum_off
+      ENDIF  
+      
+      Delay 100
+
+      POS_TEMP = CURPOS
+      search_fast = 1       
+    
+      $SPEED = 100
+      $TERMTYPE = VARDECEL
+      $DECELTOL = 99
+      $MOTYPE = LINEAR   
+      
+      UNPOS(CURPOS,x,y,z,w,p,r,configstring)
+      TEMP_PRISE = POS(x,y,z+50,w+6,p,r,configstring) 
+
+      MOVE TO TEMP_PRISE
+    
+      TEMP_PRISE = POS(x,y,z+150,w+6,p,r,configstring)
+      
+      MOVE TO TEMP_PRISE
+      
+      DELAY 750 
+    
+      $SPEED = 1500
+      $TERMTYPE = VARDECEL
+      $DECELTOL = 70
+      $MOTYPE = LINEAR     
+    
+      MOVE TO UP_SEP_POS
+      
+      DOUT[IN_ZONE_PICK] = ON
+          
+      IF DIN[VACUUM_OK] = OFF THEN
+                
+        $SPEED = 1500
+        MOVE TO POS_HOME
+        DOUT[HOME_POS] = ON
+        DOUT[DOWN_PALPEUR] = ON
+        DELAY 3000
+
+        IF DIN[PALPEUR_BAS] = ON THEN
+          palpeur_up
+          r_vacuum_off
+        ENDIF
+               
+        GOUT[ALARME] = 4
+        ABORT
+        
+      ENDIF  
+    
+      $SPEED = 1500
+      $TERMTYPE = VARDECEL
+      $DECELTOL = 40
+      MOVE ALONG GO_DROP_SEP NOWAIT
+    
+      $TERMTYPE = NOSETTLE
+ 
+      MOVE TO SEPWAIT_DROP NOWAIT
+     
+      WAIT FOR DIN[LAVEUSE_OK]
+      
+      DOUT[IN_ZONE_DROP] = OFF
+          
+      MOVE TO POS_DROP_SEP
+      
+      r_vacuum_off
+    
+      DELAY 100
+    
+      $TERMTYPE = VARDECEL
+      $DECELTOL = 20
+
+      MOVE TO SEPWAIT_DROP NOWAIT
+      
+      DOUT[IN_ZONE_DROP] = ON
+      
+      IF GIN[JOB] = 2 Then
+      
+        $SPEED = 1500
+        $TERMTYPE = VARDECEL
+        $DECELTOL = 80
+        $MOTYPE = LINEAR         
+          
+        MOVE TO DEG_LAV_SEP NOWAIT   
+                    
+      ELSE        
+          
+        MOVE ALONG GO_HOME_SEP NOWAIT
+    
+        MOVE TO POS_HOME
+        DOUT[HOME_POS] = ON
+
+      ENDIF
+
+  ENDIF        
+
+  IF DIN[RUN_MAINT] = ON THEN
+  
+    MAINTENANCE
+    
+  ENDIF  
+
+ENDWHILE
+ 
+END laveuse
+
